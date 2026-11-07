@@ -362,6 +362,37 @@ func TestReadRoleFileYAML(t *testing.T) {
 	}
 }
 
+func TestReadRoleFileYAMLList(t *testing.T) {
+	content := `apiVersion: v1
+kind: List
+items:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: kubectl-wrapper
+  rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: ["get"]
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: pod-reader
+    namespace: system
+  rules:
+  - apiGroups: ["apps"]
+    resources: [deployments]
+    verbs: ["list"]
+`
+	gs, err := readRoleFile(writeFile(t, "role.yaml", content), "role.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gs) != 2 || gs[0].Resources[0] != "pods" || gs[1].Namespace != "system" || gs[1].Resources[0] != "deployments" {
+		t.Errorf("got %+v", gs)
+	}
+}
+
 func TestReadRoleFileJSON(t *testing.T) {
 	js := `{"apiVersion":"v1","kind":"List","items":[{"kind":"ClusterRole","metadata":{"name":"x"},"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["get"]}]},{"kind":"Role","metadata":{"name":"y","namespace":"ns"},"rules":[{"apiGroups":["apps"],"resources":["deployments"],"verbs":["list"]}]}]}` + "\n"
 	gs, err := readRoleFile(writeFile(t, "role.json", js), "role.json")
@@ -388,7 +419,10 @@ func TestReadRoleFileRejects(t *testing.T) {
 		"unknown key":      "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  colour: [red]\n  verbs: [get]\n",
 		"scalar verbs":     "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs: get\n",
 		"tabs":             "kind: ClusterRole\nrules:\n-\tapiGroups: [\"\"]\n",
-		"yaml list":        "apiVersion: v1\nkind: List\nitems:\n- kind: ClusterRole\n",
+		"list with nested item unknown": "apiVersion: v1\nkind: List\nitems:\n- kind: ClusterRole\n  rules:\n  - apiGroups: [\"\"]\n    colour: [red]\n    verbs: [get]\n",
+		"list with top-level after items": "apiVersion: v1\nkind: List\nitems:\n- kind: ClusterRole\nmetadata: {}\n",
+		"list item continued shallowly": "apiVersion: v1\nkind: List\nitems:\n- kind: ClusterRole\n rules: []\n",
+		"list without items": "apiVersion: v1\nkind: List\nitems: []\n",
 		"bad json":         "{\"kind\": \"ClusterRole\", \"rules\": [\n",
 		"unclosed flow":    "kind: ClusterRole\nrules:\n- apiGroups: [\"\"\n  verbs: [get]\n",
 		"rules not list":   "kind: ClusterRole\nrules:\n  apiGroups: [\"\"]\n",

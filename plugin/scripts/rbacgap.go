@@ -2480,6 +2480,80 @@ type yamlLine struct {
 	text   string // without indent and comments
 }
 
+// expandYAMLRoleListDocuments replaces a top-level Kubernetes List document
+// with its Role and ClusterRole member documents, matching `kubectl get
+// clusterroles -o yaml`. Items are deduplicated? It only understands simple
+// items: any unrecognized List shape is rejected, so an unknown construct
+// never silently disappears.
+func expandYAMLRoleListDocuments(docs [][]yamlLine, display string) ([][]yamlLine, error) {
+	expanded := make([][]yamlLine, 0, len(docs))
+	for _, doc := range docs {
+		kind := ""
+		for _, l := range doc {
+			if l.indent != 0 {
+				continue
+			}
+			k, v, ok := strings.Cut(l.text, ":")
+			if ok && strings.TrimSpace(k) == "kind" {
+				kind = unquoteYAML(v)
+			}
+		}
+		if kind != "List" {
+			expanded = append(expanded, doc)
+			continue
+		}
+
+		itemsAt := -1
+		for i, l := range doc {
+			if l.indent == 0 && strings.HasPrefix(l.text, "items:") {
+				itemsAt = i
+				_, v, _ := strings.Cut(l.text, ":")
+				v = strings.TrimSpace(v)
+				if v != "" && v != "[]" {
+					return nil, fmt.Errorf("%s:%d: items must be a block list", display, l.n)
+				}
+				break
+			}
+		}
+		if itemsAt < 0 {
+			return nil, fmt.Errorf("%s: kind List has no items block list", display)
+		}
+
+		var items [][]yamlLine
+		var item []yamlLine
+		flush := func() {
+			if len(item) > 0 {
+				items = append(items, item)
+				item = nil
+			}
+		}
+		for _, l := range doc[itemsAt+1:] {
+			if l.indent == 0 && (strings.HasPrefix(l.text, "- ") || l.text == "-") {
+				flush()
+				first := strings.TrimSpace(strings.TrimPrefix(l.text, "-"))
+				item = []yamlLine{{n: l.n, indent: 0, text: first}}
+				continue
+			}
+			if len(item) == 0 {
+				return nil, fmt.Errorf("%s:%d: content before the first List item", display, l.n)
+			}
+			if l.indent == 0 {
+				return nil, fmt.Errorf("%s:%d: unexpected top-level key after List items", display, l.n)
+			}
+			if l.indent < 2 {
+				return nil, fmt.Errorf("%s:%d: List item continued at an unexpected indentation", display, l.n)
+			}
+			item = append(item, yamlLine{n: l.n, indent: l.indent - 2, text: l.text})
+		}
+		flush()
+		if len(items) == 0 {
+			return nil, fmt.Errorf("%s: kind List has no items", display)
+		}
+		expanded = append(expanded, items...)
+	}
+	return expanded, nil
+}
+
 // roleYAML parses documents separated by --- and reads kind,
 // metadata.namespace and rules from each.
 func roleYAML(text, display string) ([]Grant, int, error) {
@@ -2502,6 +2576,11 @@ func roleYAML(text, display string) ([]Grant, int, error) {
 		cur = append(cur, yamlLine{n: i + 1, indent: len(t) - len(strings.TrimLeft(t, " ")), text: trimmed})
 	}
 	docs = append(docs, cur)
+	expanded, err := expandYAMLRoleListDocuments(docs, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	docs = expanded
 	var grants []Grant
 	roles := 0
 	for _, doc := range docs {
@@ -2531,9 +2610,6 @@ func roleYAML(text, display string) ([]Grant, int, error) {
 			if inMeta && strings.HasPrefix(l.text, "namespace:") {
 				ns = unquoteYAML(strings.TrimPrefix(l.text, "namespace:"))
 			}
-		}
-		if kind == "List" || strings.HasSuffix(kind, "List") {
-			return nil, 0, fmt.Errorf("%s: kind %s isn't supported in YAML; use one document per role, or JSON", display, kind)
 		}
 		if kind != "Role" && kind != "ClusterRole" {
 			continue
