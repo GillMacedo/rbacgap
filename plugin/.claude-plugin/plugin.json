@@ -1,0 +1,13 @@
+{
+  "name": "rbacgap",
+  "version": "0.1.0",
+  "description": "Find Kubernetes API calls in a Go operator that its +kubebuilder:rbac markers or role YAML don't grant, before the pod logs \"forbidden\". Reads controller-runtime and client-go calls, including the list and watch a cached Get needs, and flags markers controller-gen ignores.",
+  "author": {
+    "name": "Giulliano Macedo",
+    "url": "https://github.com/GillMacedo"
+  },
+  "homepage": "https://github.com/GillMacedo/rbacgap",
+  "repository": "https://github.com/GillMacedo/rbacgap",
+  "license": "MIT",
+  "keywords": ["kubernetes", "rbac", "operator", "kubebuilder", "controller-runtime", "client-go", "controller-gen", "go", "golang", "forbidden"]
+}

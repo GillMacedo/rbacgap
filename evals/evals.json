@@ -1,0 +1,28 @@
+[
+  {
+    "skills": ["checking-operator-rbac"],
+    "query": "Our operator logs 'secrets is forbidden: cannot list resource secrets' but we only ever Get the secret. Why?",
+    "expected_behavior": [
+      "Finds the manager's main package and runs rbacgap on it from the module directory",
+      "Explains that the manager's default client serves Get from an informer cache, which needs list and watch",
+      "Quotes the MISSING line and its fix marker, and doesn't edit files unless asked"
+    ]
+  },
+  {
+    "skills": ["checking-operator-rbac"],
+    "query": "I added a controller that creates Deployments and records events. Is our kubebuilder RBAC complete?",
+    "expected_behavior": [
+      "Runs rbacgap and lists every MISSING resource with its verbs and call sites",
+      "Reports MARKER lines for markers controller-gen ignores, such as one attached to the Reconcile function",
+      "Treats exit code 2 as unknown and says what input couldn't be trusted"
+    ]
+  },
+  {
+    "skills": ["checking-operator-rbac"],
+    "query": "Our RBAC is hand-written in deploy/rbac/clusterrole.yaml, not markers. Can you check it against the controller code?",
+    "expected_behavior": [
+      "Runs rbacgap with --role deploy/rbac/clusterrole.yaml on the controller's main package",
+      "Lists UNCHECKED calls as not verified, and says permissions from other bindings in the cluster aren't visible"
+    ]
+  }
+]

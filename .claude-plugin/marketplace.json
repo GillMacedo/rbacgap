@@ -1,0 +1,14 @@
+{
+  "name": "rbacgap-marketplace",
+  "description": "Marketplace for rbacgap, which finds Kubernetes API calls in a Go operator that its RBAC doesn't grant.",
+  "owner": {
+    "name": "Giulliano Macedo"
+  },
+  "plugins": [
+    {
+      "name": "rbacgap",
+      "source": "./plugin",
+      "description": "Find controller-runtime and client-go calls in a Go operator that its +kubebuilder:rbac markers or role YAML don't grant, and markers controller-gen ignores."
+    }
+  ]
+}

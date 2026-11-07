@@ -1,0 +1,3 @@
+# rbacgap plugin
+
+This plugin adds the `checking-operator-rbac` skill to Claude Code. It runs `scripts/rbacgap.go`, a standard-library Go tool, on a Kubernetes operator written in Go. The tool type-checks the code, maps every controller-runtime and client-go call to the API group, resource and verb it needs, and lists the calls that the `+kubebuilder:rbac` markers or a Role YAML file don't grant. It also reports markers that controller-gen ignores. It needs Go 1.22 or newer and the operator's module dependencies, and it never contacts a cluster. See the repository README for examples, options and limits.
