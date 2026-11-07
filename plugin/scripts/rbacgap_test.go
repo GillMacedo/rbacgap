@@ -360,6 +360,75 @@ func TestReadRoleFileYAML(t *testing.T) {
 	if !reflect.DeepEqual(gs, want) {
 		t.Errorf("got  %+v\nwant %+v", gs, want)
 	}
+
+	// kubectl get clusterroles -o yaml prints a List with the roles under
+	// items; items of other kinds are skipped.
+	kubectlList := `apiVersion: v1
+items:
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: ClusterRole
+  metadata:
+    name: reader
+  rules:
+  - apiGroups: [""]
+    resources: [pods, secrets]
+    verbs: [get, list]
+- apiVersion: rbac.authorization.k8s.io/v1
+  kind: Role
+  metadata:
+    name: maker
+    namespace: app
+  rules:
+  - apiGroups: [apps]
+    resources: [deployments]
+    verbs: [create]
+- apiVersion: v1
+  kind: ServiceAccount
+  metadata:
+    name: manager
+kind: List
+metadata:
+  resourceVersion: ""
+`
+	gs, err = readRoleFile(writeFile(t, "list.yaml", kubectlList), "list.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []Grant{
+		{Groups: []string{""}, Resources: []string{"pods", "secrets"}, Verbs: []string{"get", "list"}, File: "list.yaml", Line: 8},
+		{Groups: []string{"apps"}, Resources: []string{"deployments"}, Verbs: []string{"create"}, Namespace: "app", File: "list.yaml", Line: 17},
+	}
+	if !reflect.DeepEqual(gs, want) {
+		t.Errorf("got  %+v\nwant %+v", gs, want)
+	}
+
+	// controller-gen and hand-written files indent the items under items:.
+	indentedList := `apiVersion: rbac.authorization.k8s.io/v1
+kind: List
+items:
+  - kind: ClusterRole
+    metadata:
+      name: builder
+    rules:
+    - apiGroups: [""]
+      resources: [configmaps]
+      verbs: ["*"]
+  - kind: Role
+    metadata:
+      name: empty
+      namespace: ci
+    rules: []
+`
+	gs, err = readRoleFile(writeFile(t, "indented.yaml", indentedList), "indented.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want = []Grant{
+		{Groups: []string{""}, Resources: []string{"configmaps"}, Verbs: []string{"*"}, File: "indented.yaml", Line: 8},
+	}
+	if !reflect.DeepEqual(gs, want) {
+		t.Errorf("got  %+v\nwant %+v", gs, want)
+	}
 }
 
 func TestReadRoleFileJSON(t *testing.T) {
@@ -376,25 +445,33 @@ func TestReadRoleFileJSON(t *testing.T) {
 func TestReadRoleFileRejects(t *testing.T) {
 	full := roleYAMLFixture
 	cases := map[string]string{
-		"empty":            "",
-		"blank":            "\n\n  \n",
-		"garbage":          "\x00\x01\x02 not yaml at all {{{\n",
-		"cut off":          full[:len(full)/2],
-		"no newline":       strings.TrimSuffix(full, "\n"),
-		"build failure":    "# example.com/op/internal/controller\ninternal/controller/x.go:12:2: undefined: foo\n",
-		"test failure":     "--- FAIL: TestX (0.00s)\n    x_test.go:9: boom\nFAIL\nexit status 1\nFAIL\texample.com/op\t0.01s\n",
-		"service only":     "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: x\n",
-		"no verbs":         "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n",
-		"unknown key":      "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  colour: [red]\n  verbs: [get]\n",
-		"scalar verbs":     "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs: get\n",
-		"tabs":             "kind: ClusterRole\nrules:\n-\tapiGroups: [\"\"]\n",
-		"yaml list":        "apiVersion: v1\nkind: List\nitems:\n- kind: ClusterRole\n",
-		"bad json":         "{\"kind\": \"ClusterRole\", \"rules\": [\n",
-		"unclosed flow":    "kind: ClusterRole\nrules:\n- apiGroups: [\"\"\n  verbs: [get]\n",
-		"rules not list":   "kind: ClusterRole\nrules:\n  apiGroups: [\"\"]\n",
-		"deeper list item": "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs:\n  - get\n    - delete\n",
-		"empty rules":      "kind: ClusterRole\nrules:\nmetadata:\n  name: x\n",
-		"anchor item":      "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs:\n  - *all\n",
+		"empty":                  "",
+		"blank":                  "\n\n  \n",
+		"garbage":                "\x00\x01\x02 not yaml at all {{{\n",
+		"cut off":                full[:len(full)/2],
+		"no newline":             strings.TrimSuffix(full, "\n"),
+		"build failure":          "# example.com/op/internal/controller\ninternal/controller/x.go:12:2: undefined: foo\n",
+		"test failure":           "--- FAIL: TestX (0.00s)\n    x_test.go:9: boom\nFAIL\nexit status 1\nFAIL\texample.com/op\t0.01s\n",
+		"service only":           "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: x\n",
+		"no verbs":               "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n",
+		"unknown key":            "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  colour: [red]\n  verbs: [get]\n",
+		"scalar verbs":           "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs: get\n",
+		"tabs":                   "kind: ClusterRole\nrules:\n-\tapiGroups: [\"\"]\n",
+		"yaml list no items":     "apiVersion: v1\nkind: List\nmetadata:\n  resourceVersion: \"\"\n",
+		"yaml list empty":        "kind: List\nitems: []\n",
+		"yaml list flow items":   "kind: List\nitems: [x, y]\n",
+		"yaml list not a list":   "kind: List\nitems:\n  kind: ClusterRole\n",
+		"yaml list item verbs":   "kind: List\nitems:\n- kind: ClusterRole\n  rules:\n  - apiGroups: [\"\"]\n    resources: [pods]\n",
+		"yaml list scalar item":  "kind: List\nitems:\n- kind: ClusterRole\n  rules: []\n- just a string\n",
+		"yaml list seq item":     "kind: List\nitems:\n- - oops\n",
+		"yaml list bad indent":   "kind: List\nitems:\n- kind: ClusterRole\n  rules:\n - apiGroups: [\"\"]\n   verbs: [get]\n",
+		"yaml list service only": "kind: List\nitems:\n- kind: ServiceAccount\n  metadata:\n    name: x\n",
+		"bad json":               "{\"kind\": \"ClusterRole\", \"rules\": [\n",
+		"unclosed flow":          "kind: ClusterRole\nrules:\n- apiGroups: [\"\"\n  verbs: [get]\n",
+		"rules not list":         "kind: ClusterRole\nrules:\n  apiGroups: [\"\"]\n",
+		"deeper list item":       "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs:\n  - get\n    - delete\n",
+		"empty rules":            "kind: ClusterRole\nrules:\nmetadata:\n  name: x\n",
+		"anchor item":            "kind: ClusterRole\nrules:\n- apiGroups: [\"\"]\n  resources: [pods]\n  verbs:\n  - *all\n",
 	}
 	for name, content := range cases {
 		gs, err := readRoleFile(writeFile(t, "role.yaml", content), "role.yaml")
