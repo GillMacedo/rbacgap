@@ -7,6 +7,5 @@
 - Read Helm-rendered multi-document files with `kind: List`
 
 ## Later
-- A GitHub Action example that runs `rbacgap` on each manager binary in a pull request
 - Read the Role a controller-runtime `LeaderElection` option needs, and check it against the leader election role file
 - Check Operator Lifecycle Manager ClusterServiceVersion permissions with `--role`
