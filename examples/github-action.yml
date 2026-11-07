@@ -1,0 +1,24 @@
+# Copy to .github/workflows/rbacgap.yml in your operator repository.
+name: Check operator RBAC
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  rbacgap:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Check manager RBAC
+        # Run from the operator's module directory. For a nested module, set
+        # working-directory here and update go-version-file above to its go.mod.
+        # Change ./cmd to ./cmd/manager if that is your manager's package.
+        run: go run github.com/GillMacedo/rbacgap/plugin/scripts@v0.1.0 ./cmd

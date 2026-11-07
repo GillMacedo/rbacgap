@@ -85,6 +85,8 @@ The examples import small stand-ins for controller-runtime, client-go and the Ku
 
 Run it in the operator's module directory, or point `--dir` at it. Packages default to `./...`. Pass a manager's `main` package, such as `./cmd` or `./cmd/manager`, to check only that binary and the module packages it imports. Markers are read from the same packages.
 
+For GitHub Actions, copy [`examples/github-action.yml`](examples/github-action.yml) to `.github/workflows/rbacgap.yml` in your operator repository. The job installs Go from `go.mod` and runs the pinned `v0.1.0` tool against `./cmd`. Adjust the package path for your manager; for a nested module, also set the check step's `working-directory` and point `go-version-file` to that module's `go.mod`. Findings (exit 1) and untrusted input (exit 2) both fail the job; no cluster credentials are needed.
+
 1. **Load.** It runs `go list -e -export -compiled -deps -json` on the packages, then lists them again to make sure none is missing. The go command compiles the packages to export data, without linking or running anything.
 2. **Type-check.** Each package of your module is parsed and type-checked with `go/types`, importing dependencies from that export data.
 3. **Find calls.** Every call to a controller-runtime client, builder, `controllerutil` helper, event recorder, cache or field indexer, and every client-go typed client or shared informer, is mapped to an API group, resource, subresource and verb from the static type of its object argument. Generated files (`Code generated ... DO NOT EDIT.`) are skipped, since their callers are checked.
