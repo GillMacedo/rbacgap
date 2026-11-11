@@ -141,8 +141,8 @@ I searched GitHub and the web for tools that compare an operator's client calls 
 - **Method values and generic helpers** (`del := r.Delete`, a function that takes `client.Object`) are UNCHECKED, not followed.
 - **Files from Kubernetes' client generators** (`client-gen`, `informer-gen`, `lister-gen`, `applyconfiguration-gen`) are skipped, since their callers are checked. Other generated files are checked.
 - **Leader election RBAC** (leases) usually lives in its own role and isn't checked.
-- **Helm templates** must be rendered with `helm template` before `--role` can read them, and kustomize patches with `kustomize build`. YAML files with `kind: List` aren't read; use JSON for those.
-- **The role file reader** understands the plain YAML layout that kubectl, kustomize and controller-gen write, with block or one-line flow lists. Anchors, multi-line flow lists and tabs are rejected with exit 2, not guessed.
+- **Helm templates** must be rendered with `helm template` before `--role` can read them, and kustomize patches with `kustomize build`.
+- **The role file reader** understands the plain YAML layout that kubectl, kustomize and controller-gen write, with block or one-line flow lists, and the `kind: List` layout `kubectl get -o yaml` prints, in YAML or JSON. Anchors, multi-line flow lists and tabs are rejected with exit 2, not guessed.
 - **The Go toolchain must match.** Run it from the operator's module so the same `go` builds both. A tool built with an older Go can't read newer export data and exits 2.
 
 ## FAQ

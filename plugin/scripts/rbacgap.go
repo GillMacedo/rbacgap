@@ -2481,7 +2481,8 @@ type yamlLine struct {
 }
 
 // roleYAML parses documents separated by --- and reads kind,
-// metadata.namespace and rules from each.
+// metadata.namespace and rules from each. A kind: List document, as kubectl
+// get -o yaml prints, is read as the Role and ClusterRole items under it.
 func roleYAML(text, display string) ([]Grant, int, error) {
 	var docs [][]yamlLine
 	var cur []yamlLine
@@ -2508,73 +2509,217 @@ func roleYAML(text, display string) ([]Grant, int, error) {
 		if len(doc) == 0 {
 			continue
 		}
-		kind, ns := "", ""
-		rulesAt := -1
-		inMeta := false
-		for i, l := range doc {
-			if l.indent == 0 {
-				inMeta = false
-				k, v, ok := strings.Cut(l.text, ":")
-				if !ok && !strings.HasPrefix(l.text, "- ") {
-					return nil, 0, fmt.Errorf("%s:%d: expected a key, got %q", display, l.n, l.text)
-				}
-				switch strings.TrimSpace(k) {
-				case "kind":
-					kind = unquoteYAML(v)
-				case "metadata":
-					inMeta = true
-				case "rules":
-					rulesAt = i
-				}
-				continue
-			}
-			if inMeta && strings.HasPrefix(l.text, "namespace:") {
-				ns = unquoteYAML(strings.TrimPrefix(l.text, "namespace:"))
-			}
-		}
-		if kind == "List" || strings.HasSuffix(kind, "List") {
-			return nil, 0, fmt.Errorf("%s: kind %s isn't supported in YAML; use one document per role, or JSON", display, kind)
-		}
-		if kind != "Role" && kind != "ClusterRole" {
-			continue
-		}
-		roles++
-		if rulesAt < 0 {
-			continue
-		}
-		_, v, _ := strings.Cut(doc[rulesAt].text, ":")
-		v = strings.TrimSpace(v)
-		if v == "[]" {
-			continue
-		}
-		if v != "" {
-			return nil, 0, fmt.Errorf("%s:%d: rules must be a block list", display, doc[rulesAt].n)
-		}
-		var body []yamlLine
-		for _, l := range doc[rulesAt+1:] {
-			if l.indent == 0 && !strings.HasPrefix(l.text, "- ") {
-				break
-			}
-			body = append(body, l)
-		}
-		if len(body) == 0 {
-			return nil, 0, fmt.Errorf("%s:%d: rules has no items; write rules: [] for an empty role", display, doc[rulesAt].n)
-		}
-		gs, err := parseRules(body, display)
+		gs, n, err := roleYAMLDoc(doc, display)
 		if err != nil {
 			return nil, 0, err
 		}
-		for i := range gs {
-			if kind == "Role" {
-				gs[i].Namespace = ns
-				if ns == "" {
-					gs[i].Namespace = "(the Role's namespace)"
-				}
-			}
-		}
 		grants = append(grants, gs...)
+		roles += n
 	}
 	return grants, roles, nil
+}
+
+// roleYAMLDoc reads the roles in one document: a single Role or ClusterRole,
+// or a kind: List whose items are roles.
+func roleYAMLDoc(doc []yamlLine, display string) ([]Grant, int, error) {
+	kind, ns, rulesAt, itemsAt, err := scanDoc(doc, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	if kind == "List" || strings.HasSuffix(kind, "List") {
+		return listRoleItems(doc, itemsAt, kind, display)
+	}
+	gs, isRole, err := docRole(doc, kind, ns, rulesAt, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !isRole {
+		return nil, 0, nil
+	}
+	return gs, 1, nil
+}
+
+// scanDoc walks the keys of one document: its kind, the namespace under
+// metadata, and where the rules and items blocks start.
+func scanDoc(doc []yamlLine, display string) (kind, ns string, rulesAt, itemsAt int, err error) {
+	rulesAt, itemsAt = -1, -1
+	inMeta := false
+	for i, l := range doc {
+		if l.indent == 0 {
+			inMeta = false
+			k, v, ok := strings.Cut(l.text, ":")
+			if !ok && !strings.HasPrefix(l.text, "- ") {
+				return "", "", 0, 0, fmt.Errorf("%s:%d: expected a key, got %q", display, l.n, l.text)
+			}
+			switch strings.TrimSpace(k) {
+			case "kind":
+				kind = unquoteYAML(v)
+			case "metadata":
+				inMeta = true
+			case "rules":
+				rulesAt = i
+			case "items":
+				itemsAt = i
+			}
+			continue
+		}
+		if inMeta && strings.HasPrefix(l.text, "namespace:") {
+			ns = unquoteYAML(strings.TrimPrefix(l.text, "namespace:"))
+		}
+	}
+	return kind, ns, rulesAt, itemsAt, nil
+}
+
+// docRole reads the rules of one Role or ClusterRole document. It reports
+// whether the document is a role; anything else, such as a ServiceAccount,
+// is skipped.
+func docRole(doc []yamlLine, kind, ns string, rulesAt int, display string) ([]Grant, bool, error) {
+	if kind != "Role" && kind != "ClusterRole" {
+		return nil, false, nil
+	}
+	if rulesAt < 0 {
+		return nil, true, nil
+	}
+	_, v, _ := strings.Cut(doc[rulesAt].text, ":")
+	v = strings.TrimSpace(v)
+	if v == "[]" {
+		return nil, true, nil
+	}
+	if v != "" {
+		return nil, false, fmt.Errorf("%s:%d: rules must be a block list", display, doc[rulesAt].n)
+	}
+	var body []yamlLine
+	for _, l := range doc[rulesAt+1:] {
+		if l.indent == 0 && !strings.HasPrefix(l.text, "- ") {
+			break
+		}
+		body = append(body, l)
+	}
+	if len(body) == 0 {
+		return nil, false, fmt.Errorf("%s:%d: rules has no items; write rules: [] for an empty role", display, doc[rulesAt].n)
+	}
+	gs, err := parseRules(body, display)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range gs {
+		if kind == "Role" {
+			gs[i].Namespace = ns
+			if ns == "" {
+				gs[i].Namespace = "(the Role's namespace)"
+			}
+		}
+	}
+	return gs, true, nil
+}
+
+// listRoleItems reads the Role and ClusterRole items of a kind: List
+// document, such as kubectl get clusterroles -o yaml prints. Only the plain
+// layout kubectl and controller-gen write is understood: a block list under
+// items, one role per item.
+func listRoleItems(doc []yamlLine, itemsAt int, kind, display string) ([]Grant, int, error) {
+	if itemsAt < 0 {
+		return nil, 0, fmt.Errorf("%s: kind %s has no items; use one document per role, or JSON", display, kind)
+	}
+	_, v, _ := strings.Cut(doc[itemsAt].text, ":")
+	v = strings.TrimSpace(v)
+	if v == "[]" {
+		return nil, 0, nil
+	}
+	if v != "" {
+		return nil, 0, fmt.Errorf("%s:%d: items must be a block list", display, doc[itemsAt].n)
+	}
+	var body []yamlLine
+	for _, l := range doc[itemsAt+1:] {
+		if l.indent == 0 && !strings.HasPrefix(l.text, "- ") {
+			break
+		}
+		body = append(body, l)
+	}
+	if len(body) == 0 {
+		return nil, 0, fmt.Errorf("%s:%d: items has no entries; use one document per role, or JSON", display, doc[itemsAt].n)
+	}
+	if !strings.HasPrefix(body[0].text, "- ") && body[0].text != "-" {
+		return nil, 0, fmt.Errorf("%s:%d: items must be a list", display, body[0].n)
+	}
+	items, err := splitItems(body, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	var grants []Grant
+	roles := 0
+	for _, item := range items {
+		gs, n, err := itemRole(item, display)
+		if err != nil {
+			return nil, 0, err
+		}
+		grants = append(grants, gs...)
+		roles += n
+	}
+	return grants, roles, nil
+}
+
+// itemRole reads one item of a List. An item may not itself be a List, so
+// like the JSON reader only one level of items is read.
+func itemRole(doc []yamlLine, display string) ([]Grant, int, error) {
+	kind, ns, rulesAt, _, err := scanDoc(doc, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	gs, isRole, err := docRole(doc, kind, ns, rulesAt, display)
+	if err != nil {
+		return nil, 0, err
+	}
+	if !isRole {
+		return nil, 0, nil
+	}
+	return gs, 1, nil
+}
+
+// splitItems splits the body of an items block into one document per list
+// item, shifting each item's keys to indent 0. kubectl writes items flush
+// left and controller-gen indents them; both are read.
+func splitItems(body []yamlLine, display string) ([][]yamlLine, error) {
+	seqIndent := body[0].indent
+	var docs [][]yamlLine
+	var cur []yamlLine
+	base := -1
+	flush := func() {
+		if len(cur) > 0 {
+			docs = append(docs, cur)
+			cur = nil
+		}
+	}
+	for _, l := range body {
+		if l.indent == seqIndent && (strings.HasPrefix(l.text, "- ") || l.text == "-") {
+			flush()
+			rest := ""
+			if l.text != "-" {
+				rest = strings.TrimPrefix(l.text, "- ")
+			}
+			if rest == "" {
+				base = -1 // the item's keys start on the following lines
+				continue
+			}
+			lead := len(rest) - len(strings.TrimLeft(rest, " "))
+			rest = strings.TrimLeft(rest, " ")
+			if strings.HasPrefix(rest, "- ") || rest == "-" || strings.ContainsAny(rest[:1], "[{&*!|>") {
+				return nil, fmt.Errorf("%s:%d: item %q isn't a Role or ClusterRole", display, l.n, rest)
+			}
+			base = seqIndent + 2 + lead
+			cur = []yamlLine{{n: l.n, indent: 0, text: rest}}
+			continue
+		}
+		if base < 0 {
+			base = l.indent
+		}
+		if l.indent < base {
+			return nil, fmt.Errorf("%s:%d: unexpected indentation in items", display, l.n)
+		}
+		cur = append(cur, yamlLine{n: l.n, indent: l.indent - base, text: l.text})
+	}
+	flush()
+	return docs, nil
 }
 
 func stripComment(s string) string {
